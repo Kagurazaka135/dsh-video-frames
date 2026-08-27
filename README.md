@@ -1,5 +1,7 @@
 # dsh-video-frames
 
+**v0.1.0**
+
 [DSH (DeepSeek Harness)](https://github.com/deepseek-ai/deepseek-harness) 插件：给纯文本 agent 补上视频理解能力——抽帧、场景切换检测、GIF 片段、元数据探测。
 
 底层通过 `child_process` 调本机 `ffmpeg` / `ffprobe`，参数走 argv 数组（无 shell 注入）。不需要 Python / PIL / 外部服务。
