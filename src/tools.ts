@@ -197,7 +197,7 @@ export function registerVideoTools(ctx: Context): void {
   // ---- video_analyze: 抽帧 → 走 ctx.llm 调 vision 模型分析 ----
   ctx.tools.register(defineTool({
     name: 'video_analyze',
-    description: 'Analyze a video by extracting keyframes and sending them to a vision LLM via ctx.llm. Returns the model\'s summary of the scene/content. Requires a vision-capable model (default: deepseek-v4-flash-vision-exp on deepseek-official) and the attachments service.',
+    description: 'Analyze a video by extracting keyframes and sending them to a vision LLM via ctx.llm. Returns the model\'s summary of the scene/content. Requires a vision-capable model (default: deepseek-flash on deepseek-official) and the attachments service.',
     parameters: {
       path: { type: 'string', required: true, description: 'Path to the video file' },
       mode: { type: 'string', description: 'uniform (default) | scenes (shot-change aware, skips static frames)' },
@@ -208,7 +208,7 @@ export function registerVideoTools(ctx: Context): void {
       max_frames: { type: 'number', description: 'Cap on number of frames sent to the model (default 60; avoids runaway token cost)' },
       max_tokens: { type: 'number', description: 'Model output cap (default 2000)' },
       provider: { type: 'string', description: 'LLM provider route registered on ctx.llm (default deepseek-official)' },
-      model: { type: 'string', description: 'Vision-capable model id (default deepseek-v4-flash-vision-exp)' },
+      model: { type: 'string', description: 'Vision-capable model id (default deepseek-flash)' },
     },
     output: {
       schema: {
@@ -224,7 +224,7 @@ export function registerVideoTools(ctx: Context): void {
     async execute(args, exec: ToolRunContext) {
       const result = await analyzeVideo(ctx, args.path, {
         provider: args.provider ?? 'deepseek-official',
-        model: args.model ?? 'deepseek-v4-flash-vision-exp',
+        model: args.model ?? 'deepseek-flash',
         prompt: args.prompt ?? '',
         mode: args.mode === 'scenes' ? 'scenes' : 'uniform',
         interval: args.interval,
