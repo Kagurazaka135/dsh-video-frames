@@ -217,7 +217,7 @@ export function registerVideoAnalyzeTool(ctx: Context): void {
       from: { type: 'number', description: 'Start time in seconds' },
       to: { type: 'number', description: 'End time in seconds' },
       prompt: { type: 'string', description: 'Custom analysis instruction sent to the vision model (default: summarize scene/content/key info)' },
-      max_frames: { type: 'number', description: 'Cap on number of frames sent to the model (default 60; avoids runaway token cost)' },
+      max_frames: { type: 'number', description: 'Cap on frames sent to the model (default: host image-count limit; automatically capped to that limit)' },
       max_tokens: { type: 'number', description: 'Model output cap (default 2000)' },
       provider: { type: 'string', description: 'LLM provider route registered on ctx.llm (default deepseek-official)' },
       model: { type: 'string', description: 'Vision-capable model id (default deepseek-flash)' },

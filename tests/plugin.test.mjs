@@ -8,6 +8,7 @@ import { syncBuiltinESMExports } from 'node:module'
 import test from 'node:test'
 import { registerVideoTools, registerVideoAnalyzeTool } from '../lib/tools.js'
 import { apply, inject } from '../lib/index.js'
+import { analyzeVideo } from '../lib/analyze.js'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
 
@@ -123,6 +124,54 @@ test('out_dir keeps same-device rename and copies/unlinks on EXDEV', async () =>
   } finally {
     fs.rename = originalRename
     syncBuiltinESMExports()
+    for (const [key, value] of Object.entries(previousTemp)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('170-second analysis adapts to host limits, keeps LLM integration, and explains attachment failures', async () => {
+  await mkdir(join(repo, '.tmp'), { recursive: true })
+  const dir = await mkdtemp(join(repo, '.tmp', 'analyze-'))
+  const previousTemp = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR }
+  try {
+    process.env.TEMP = process.env.TMP = process.env.TMPDIR = dir
+    const video = join(dir, '170s.mp4')
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=32x32:rate=1', '-t', '170', '-c:v', 'mpeg4', video])
+    let batch, request
+    const ctx = {
+      attachments: {
+        imageLimits: { maxImagesPerMessage: 20 },
+        async saveImages(inputs) {
+          assert(inputs.length <= ctx.attachments.imageLimits.maxImagesPerMessage)
+          batch = inputs
+          return inputs.map((_, i) => ({ id: `test-${i}` }))
+        },
+      },
+      llm: {
+        async *stream(input) {
+          request = input
+          yield { type: 'text-delta', text: 'test summary' }
+        },
+      },
+    }
+    const options = { provider: 'test', model: 'test', prompt: '', signal: new AbortController().signal }
+    const value = await analyzeVideo(ctx, video, options)
+    assert.equal(value.text, 'test summary')
+    assert(batch.length > 0 && batch.length <= 20)
+    assert(value.frames.at(-1) >= 150, 'uniform sampling must cover the whole video')
+    assert.equal(request.messages[0].content.filter(block => block.type === 'image').length, batch.length)
+    ctx.attachments.imageLimits.maxImagesPerMessage = 3
+    await analyzeVideo(ctx, video, { ...options, maxFrames: 60 })
+    assert(batch.length <= 3, 'explicit max_frames must still respect the host limit')
+    await analyzeVideo(ctx, video, { ...options, maxFrames: 2, start: 20, end: 100 })
+    assert(batch.length <= 2)
+    assert(request.messages[0].content.some(block => block.type === 'text'))
+    ctx.attachments.saveImages = async () => { throw new Error('Image batch exceeds the configured image-count limit.') }
+    await assert.rejects(analyzeVideo(ctx, video, options), /视频关键帧保存失败.*降低 max_frames 或增大 interval/)
+  } finally {
     for (const [key, value] of Object.entries(previousTemp)) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
