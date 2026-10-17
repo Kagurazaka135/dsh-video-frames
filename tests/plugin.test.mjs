@@ -4,13 +4,16 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/pr
 import { resolve, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import test from 'node:test'
-import { registerVideoTools } from '../lib/tools.js'
+import { registerVideoTools, registerVideoAnalyzeTool } from '../lib/tools.js'
+import { apply, inject } from '../lib/index.js'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
 
 test('all five compiled schemas keep the public argument names and required fields', () => {
   const tools = new Map()
-  registerVideoTools({ tools: { register: tool => tools.set(tool.name, tool) } })
+  const ctx = { tools: { register: tool => tools.set(tool.name, tool) } }
+  registerVideoTools(ctx)
+  registerVideoAnalyzeTool(ctx)
   assert.deepEqual([...tools.keys()], ['video_info', 'video_scenes', 'video_gif', 'video_frames', 'video_analyze'])
   const expected = {
     video_info: ['path'],
@@ -24,6 +27,23 @@ test('all five compiled schemas keep the public argument names and required fiel
     assert.deepEqual(Object.keys(tool.parameters.properties), expected[name])
     assert.deepEqual(tool.parameters.required, name === 'video_gif' ? ['path', 'out'] : ['path'])
   }
+})
+
+test('tools-only hosts retain four tools and register analysis after both services appear', () => {
+  assert.deepEqual(inject, ['tools'])
+  const names = []
+  let deferred
+  const ctx = {
+    tools: { register: tool => names.push(tool.name) },
+    inject(dependencies, callback) {
+      assert.deepEqual(dependencies, ['attachments', 'llm'])
+      deferred = callback
+    },
+  }
+  apply(ctx)
+  assert.deepEqual(names, ['video_info', 'video_scenes', 'video_gif', 'video_frames'])
+  deferred(ctx)
+  assert.equal(names[4], 'video_analyze')
 })
 
 test('compiled tools reject invalid arguments before running ffmpeg', async () => {

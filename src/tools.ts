@@ -196,6 +196,10 @@ export function registerVideoTools(ctx: Context): void {
     },
   }))
 
+}
+
+// 仅在 attachments + llm 就绪的子作用域中注册；服务消失时由 Cordis 自动回收。
+export function registerVideoAnalyzeTool(ctx: Context): void {
   // ---- video_analyze: 抽帧 → 走 ctx.llm 调 vision 模型分析 ----
   ctx.tools.register(defineVideoTool({
     name: 'video_analyze',
