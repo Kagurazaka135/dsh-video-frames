@@ -3,6 +3,8 @@ import { execFileSync } from 'node:child_process'
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import fs from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import test from 'node:test'
 import { registerVideoTools, registerVideoAnalyzeTool } from '../lib/tools.js'
 import { apply, inject } from '../lib/index.js'
@@ -85,6 +87,46 @@ test('a linked built package loads five tools without resolving dsh-tools at run
     assert.match(output, /video_info,video_scenes,video_gif,video_frames,video_analyze/)
     assert.doesNotMatch(await readFile(join(plugin, 'lib/tools.js'), 'utf8'), /from ['"]@deepseek-ai\/dsh-tools['"]|defineVideoTool\(/)
   } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('out_dir keeps same-device rename and copies/unlinks on EXDEV', async () => {
+  await mkdir(join(repo, '.tmp'), { recursive: true })
+  const dir = await mkdtemp(join(repo, '.tmp', 'exdev-'))
+  const previousTemp = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR }
+  const originalRename = fs.rename
+  try {
+    process.env.TEMP = process.env.TMP = process.env.TMPDIR = dir
+    const video = join(dir, 'sample.mp4')
+    execFileSync('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=64x64:rate=1', '-t', '2', '-c:v', 'mpeg4', video])
+    const tools = []
+    registerVideoTools({ tools: { register: tool => tools.push(tool) } })
+    const extract = tools.find(tool => tool.name === 'video_frames')
+    for (const crossDevice of [false, true]) {
+      const sources = []
+      fs.rename = async (from, to) => {
+        sources.push(from)
+        if (crossDevice) throw Object.assign(new Error('simulated cross-device move'), { code: 'EXDEV' })
+        return originalRename(from, to)
+      }
+      syncBuiltinESMExports()
+      const out = join(dir, crossDevice ? 'cross-device' : 'same-device')
+      const value = await extract.execute({ path: video, interval: 1, out_dir: out }, { signal: new AbortController().signal })
+      assert.equal(value.count, 2)
+      assert.equal(sources.length, 2)
+      for (const source of sources) await assert.rejects(fs.stat(source), { code: 'ENOENT' })
+      for (const file of await fs.readdir(out)) {
+        assert.deepEqual((await readFile(join(out, file))).subarray(0, 2), Buffer.from([0xff, 0xd8]))
+      }
+    }
+  } finally {
+    fs.rename = originalRename
+    syncBuiltinESMExports()
+    for (const [key, value] of Object.entries(previousTemp)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
     await rm(dir, { recursive: true, force: true })
   }
 })

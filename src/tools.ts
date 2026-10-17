@@ -1,7 +1,7 @@
 // 工具定义：合并版 video_frames + 拆分版 video_scenes / video_gif / video_info。
 // 全部复用 src/ffmpeg.ts 的核心逻辑，Node 调 ffmpeg/ffprobe。
 import { join } from 'node:path'
-import { mkdir, rename, stat } from 'node:fs/promises'
+import { copyFile, mkdir, rename, stat, unlink } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 // 编译宏：tools/compile-tools.mjs 将 schema 编译成字面量，运行时不依赖 dsh-tools。
@@ -37,7 +37,13 @@ async function emitFrames(
       ? `scene_${String(i + 1).padStart(2, '0')}_at_${fmtTs(f.time).replace(/:/g, '-')}.${ext}`
       : `${mode}_${String(i + 1).padStart(3, '0')}.${ext}`
     const dst = join(outDir, name)
-    await rename(f.file, dst)
+    try {
+      await rename(f.file, dst)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+      await copyFile(f.file, dst)
+      await unlink(f.file)
+    }
     kept.push({ time: f.time, file: dst })
   }
   return { frames: kept }
