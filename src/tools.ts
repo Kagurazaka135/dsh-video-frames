@@ -1,9 +1,11 @@
 // 工具定义：合并版 video_frames + 拆分版 video_scenes / video_gif / video_info。
 // 全部复用 src/ffmpeg.ts 的核心逻辑，Node 调 ffmpeg/ffprobe。
 import { join } from 'node:path'
-import { mkdir, rename, stat } from 'node:fs/promises'
+import { copyFile, mkdir, rename, stat, unlink } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+// 编译宏：tools/compile-tools.mjs 将 schema 编译成字面量，运行时不依赖 dsh-tools。
+declare const defineVideoTool: typeof import('@deepseek-ai/dsh-tools').defineTool
 import {
   probeVideo, extractFrames, sceneFrames, makeGif, fmtTs, cleanupDir, type FrameInfo,
 } from './ffmpeg.ts'
@@ -35,7 +37,13 @@ async function emitFrames(
       ? `scene_${String(i + 1).padStart(2, '0')}_at_${fmtTs(f.time).replace(/:/g, '-')}.${ext}`
       : `${mode}_${String(i + 1).padStart(3, '0')}.${ext}`
     const dst = join(outDir, name)
-    await rename(f.file, dst)
+    try {
+      await rename(f.file, dst)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EXDEV') throw error
+      await copyFile(f.file, dst)
+      await unlink(f.file)
+    }
     kept.push({ time: f.time, file: dst })
   }
   return { frames: kept }
@@ -43,7 +51,7 @@ async function emitFrames(
 
 export function registerVideoTools(ctx: Context): void {
   // ---- 拆分版 1: video_info ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_info',
     description: 'Probe a video file and return metadata: duration, resolution, fps, codec, whether it has an audio track.',
     parameters: {
@@ -69,7 +77,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- 拆分版 2: video_scenes ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_scenes',
     description: 'Scene-aware extraction: detect shot changes (cuts) and extract one frame at each cut point. Skips static frames. Good for long/multi-shot videos; more token-efficient than uniform sampling.',
     parameters: {
@@ -110,7 +118,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- 拆分版 3: video_gif ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_gif',
     description: 'Cut a segment of a video and convert it to an animated GIF (for motion that static frames cannot show).',
     parameters: {
@@ -137,7 +145,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- 合并版: video_frames (mode 参数统一入口) ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_frames',
     description: 'Extract frames from a video. Unified entry point: mode=uniform (every N seconds), mode=scenes (shot-change aware), mode=gif (animated clip), mode=info (metadata only), mode=frames (uniform but output standalone files). For fine-grained control use video_info / video_scenes / video_gif separately.',
     parameters: {
@@ -194,8 +202,12 @@ export function registerVideoTools(ctx: Context): void {
     },
   }))
 
+}
+
+// 仅在 attachments + llm 就绪的子作用域中注册；服务消失时由 Cordis 自动回收。
+export function registerVideoAnalyzeTool(ctx: Context): void {
   // ---- video_analyze: 抽帧 → 走 ctx.llm 调 vision 模型分析 ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_analyze',
     description: 'Analyze a video by extracting keyframes and sending them to a vision LLM via ctx.llm. Returns the model\'s summary of the scene/content. Requires a vision-capable model (default: deepseek-flash on deepseek-official) and the attachments service.',
     parameters: {
@@ -205,7 +217,7 @@ export function registerVideoTools(ctx: Context): void {
       from: { type: 'number', description: 'Start time in seconds' },
       to: { type: 'number', description: 'End time in seconds' },
       prompt: { type: 'string', description: 'Custom analysis instruction sent to the vision model (default: summarize scene/content/key info)' },
-      max_frames: { type: 'number', description: 'Cap on number of frames sent to the model (default 60; avoids runaway token cost)' },
+      max_frames: { type: 'number', description: 'Cap on frames sent to the model (default: host image-count limit; automatically capped to that limit)' },
       max_tokens: { type: 'number', description: 'Model output cap (default 2000)' },
       provider: { type: 'string', description: 'LLM provider route registered on ctx.llm (default deepseek-official)' },
       model: { type: 'string', description: 'Vision-capable model id (default deepseek-flash)' },
