@@ -3,7 +3,9 @@
 import { join } from 'node:path'
 import { mkdir, rename, stat } from 'node:fs/promises'
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool, type ToolRunContext } from '@deepseek-ai/dsh-tools'
+import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
+// 编译宏：tools/compile-tools.mjs 将 schema 编译成字面量，运行时不依赖 dsh-tools。
+declare const defineVideoTool: typeof import('@deepseek-ai/dsh-tools').defineTool
 import {
   probeVideo, extractFrames, sceneFrames, makeGif, fmtTs, cleanupDir, type FrameInfo,
 } from './ffmpeg.ts'
@@ -43,7 +45,7 @@ async function emitFrames(
 
 export function registerVideoTools(ctx: Context): void {
   // ---- 拆分版 1: video_info ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_info',
     description: 'Probe a video file and return metadata: duration, resolution, fps, codec, whether it has an audio track.',
     parameters: {
@@ -69,7 +71,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- 拆分版 2: video_scenes ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_scenes',
     description: 'Scene-aware extraction: detect shot changes (cuts) and extract one frame at each cut point. Skips static frames. Good for long/multi-shot videos; more token-efficient than uniform sampling.',
     parameters: {
@@ -110,7 +112,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- 拆分版 3: video_gif ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_gif',
     description: 'Cut a segment of a video and convert it to an animated GIF (for motion that static frames cannot show).',
     parameters: {
@@ -137,7 +139,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- 合并版: video_frames (mode 参数统一入口) ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_frames',
     description: 'Extract frames from a video. Unified entry point: mode=uniform (every N seconds), mode=scenes (shot-change aware), mode=gif (animated clip), mode=info (metadata only), mode=frames (uniform but output standalone files). For fine-grained control use video_info / video_scenes / video_gif separately.',
     parameters: {
@@ -195,7 +197,7 @@ export function registerVideoTools(ctx: Context): void {
   }))
 
   // ---- video_analyze: 抽帧 → 走 ctx.llm 调 vision 模型分析 ----
-  ctx.tools.register(defineTool({
+  ctx.tools.register(defineVideoTool({
     name: 'video_analyze',
     description: 'Analyze a video by extracting keyframes and sending them to a vision LLM via ctx.llm. Returns the model\'s summary of the scene/content. Requires a vision-capable model (default: deepseek-flash on deepseek-official) and the attachments service.',
     parameters: {
